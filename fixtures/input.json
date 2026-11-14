@@ -1,0 +1,56 @@
+{
+  "k": 3,
+  "queries": [
+    {
+      "id": "q1",
+      "judgments": [
+        {
+          "doc": "A",
+          "grade": 3
+        },
+        {
+          "doc": "B",
+          "grade": 1
+        },
+        {
+          "doc": "C",
+          "grade": 0
+        }
+      ]
+    },
+    {
+      "id": "q2",
+      "judgments": [
+        {
+          "doc": "Z",
+          "grade": 1
+        }
+      ]
+    },
+    {
+      "id": "q3",
+      "judgments": [
+        {
+          "doc": "N",
+          "grade": 0
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "query": "q1",
+      "docs": [
+        "A",
+        "X",
+        "B"
+      ]
+    },
+    {
+      "query": "q3",
+      "docs": [
+        "N"
+      ]
+    }
+  ]
+}
