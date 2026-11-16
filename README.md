@@ -24,8 +24,22 @@ python3 -m venv .venv
 输入和输出不得相同，输出符号链接拒绝。单操作者批处理，不承诺并发发布或断电恢复。
 同输入重跑不累加。测试使用临时目录，运行产物在忽略的run/。
 
+## SQLite 评测仓（多系统共用判断）
+
+同一组判断可持续服务多个检索系统：批次事实（query判断、system声明、run、drop_run）以JSONL
+原子写入单文件仓，每个成功的非空批次使revision恰增1；判断修订后下一份报告立即给出一致的
+系统分数与覆盖率。指标口径与单文件入口一致（见 [数据契约](docs/contract.md) 的 warehouse v2 节）。
+
+```sh
+.venv/bin/retrieval-eval warehouse-init --db run/eval.db --k 3
+.venv/bin/retrieval-eval warehouse-apply --db run/eval.db --source run/batch1.jsonl
+.venv/bin/retrieval-eval warehouse-report --db run/eval.db --output run/warehouse-report.json
+.venv/bin/retrieval-eval warehouse-report --db run/eval.db --output run/s1.json --system s1
+```
+
 src/retrieval_eval/model.py 为业务模型，相关算法模块独立组织；common.py 提供受限JSON及报告发布，
-cli.py 衔接数据链路。fixtures 为明确自制样例，代码与样例采用MIT许可。
+warehouse.py 提供批次事实层、指标物化层与稀疏汇总报告，cli.py 衔接数据链路。
+fixtures 为明确自制样例，代码与样例采用MIT许可。
 
 ## 业务与样例结果
 
