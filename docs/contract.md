@@ -222,3 +222,102 @@ blocked/warning/compatible消费者数、消费者总数与三类字段差异数
 并释放JSON树，峰值内存随逻辑模型而非JSON文本增长；影响判定经path→readers索引连接，
 工作量随变更路径数与命中读取数增长。Linux峰值RSS（/proc VmHWM）验收约82MiB，低于192MiB上限；
 报告仍包含全部字段差异与所有实际相关的消费者问题。
+
+# Human arbitration review pack v1（人工仲裁样本包）
+
+面向检索质量团队：锚点系统与候选系统对同一 query 的前 k 位相关性判断不一致时，需要一份
+覆盖查询分组与系统的、可复现的复核清单，而不是另一份汇总分数。只用 Python 标准库，
+只读打开现有评测仓；不改变评测、warehouse、contract-impact 与会话入口。
+
+## 命令
+
+- `retrieval-eval review-pack --db DB --groups FILE --anchor ID --top N --budget B --cell-floor F --output REPORT`：
+  从评测仓的一个只读快照生成仲裁样本包并原子发布。
+  DB 必须是已有评测仓（只读打开，绝不创建）；groups 为 UTF-8 JSON；anchor 必须是已声明系统；
+  top 1..100、budget 1..500、cell-floor 1..20。任一输入/参数无效或输出失败退出2并保留旧报告。
+  路径安全沿用既有规则：DB、groups 与输出不得同路径（按resolve比较），输出为符号链接拒绝，
+  成功时临时文件原子替换。
+
+## 输入
+
+groups：`{"groups": [{"id": G, "queries": [Q, ...]}]}`，组恰好 `id` 与 `queries` 两个字段。
+
+- G 与 Q 沿用仓库标识符规则（去空白后非空、≤128字符、无控制字符）；重复组ID、
+  空标识符、未知键或缺失键均拒绝。JSON 层拒绝重复键与非有限数值；文件≤32MB。
+- 每个 query 必须且只能属于一组：组内重复、跨组重复、引用仓中不存在的 query、
+  以及仓中存在却未被任何组列出的 query，全部拒绝。上限：组≤10000、单组query≤200000、
+  grouped query≤200000；覆盖单元（组×候选系统）≤2000000，超出即拒绝而不是截断。
+- 分组文件与仓中 query 集合必须精确相同；缺少一个 query 与多出一个 query 同样失败。
+
+## 分歧单元
+
+在同一只读快照（单个延迟读事务，WAL 快照隔离）中读取 revision、k、判断与显式 run。
+候选系统为除 anchor 外的全部已声明系统。只有 anchor 与候选都显式存在 run 的 query 才参与
+比较；缺任一侧 run 的 query 不产生该候选样本，也不按空结果合成。每个 run 截取前
+`min(k, top)` 位（k 固定建仓时，top 由命令给出），逐位置三态：
+
+- 相关：存在该 doc 判断且 grade>0；
+- 不相关：存在该 doc 判断且 grade==0；
+- 未判断：该 doc 在 query 判断中不存在（grade缺失与grade0明确不同）。
+
+anchor 与候选的三态序列不同（含长度不同、短run）时，该 query 对该候选构成一个分歧单元。
+每个 query 只形成一个候选样本，保留所有分歧系统、双方逐位文档与状态、以及全部差异位置；
+同一 query 对同一候选至多一个样本。两侧完全相同的候选不生成样本。
+
+## 样本选择
+
+样本选择职责须在预算内选择至多 B 个不同 query。覆盖单元为 `(查询分组, 候选系统)`，
+包含没有任何分歧样本的单元（候选数0）。目标是每个具备至少 F 个候选样本的单元选中 F 个；
+候选样本少于 F 的单元不达标，报告不得伪报达标。
+
+每轮从未被选中的 query 中按以下元组降序选择，完全相同时按 query ID 升序：
+
+1. 本次选择可填补的未达标单元数：该 query 当前可贡献的、仍差一个即达标的合格单元数
+   （当前选中数为 F-1）；
+2. 首次覆盖的合格单元数：该 query 可贡献且当前选中数为 0 的合格单元数；
+3. 覆盖单元总数：该 query 有分歧样本的单元数；
+4. 三态位置差异总数：该 query 对其全部分歧单元的差异位置之和。
+
+达到预算或没有未选 query 时停止；同一 query 不重复选择。选择是单一确定性贪心，
+不做多轮再优化。报告逐单元给出候选数、目标数、选中数、是否合格与是否达标，
+并以 `coverage_complete` 明确是否所有合格单元达标；样本不足的单元也列出但不计入达标。
+
+只有由同一仓快照计算出的分歧单元才能参与覆盖选择。若某 query 的 run、判断或所属分组改变
+其分歧覆盖，下一轮选择必须据此更新配额缺口，不能沿用旧候选的覆盖状态：本命令每次运行都
+从当前快照的 cells 重新推导 units/keys，再执行选择，没有任何跨运行缓存。
+
+## 报告
+
+`{schema_version:1, report:"review-pack", revision, k, anchor, top, budget, cell_floor,
+groups:[{id, query_count}], systems:{anchor, candidates:[...]}, summary:{...},
+samples:[...], units:[...]}`。
+
+- `groups` 按ID排序；`systems.candidates` 按ID排序（anchor 除外）。
+- `samples` 按 query ID 排序，每项 `{query, group, systems:[{system, anchor_docs,
+  anchor_states, candidate_docs, candidate_states, diff_positions}]}`；`systems` 按系统ID
+  排序，只含与该 query 的 anchor 存在分歧的候选。`*_docs` 为截取的文档序列，
+  `*_states` 为 `relevant`/`irrelevant`/`unjudged` 序列，`diff_positions` 为从0开始的位置。
+- `units` 按 `(group, system)` 排序，每项 `{group, system, candidate_count, target,
+  selected, qualified, met}`；`candidate_count` 是该单元候选样本数，`target` 为 F，
+  `selected` 为选中数，`qualified=candidate_count>=F`，`met=qualified and selected>=F`。
+- `summary`：`query_count`、`group_count`、`compared_queries`（anchor与至少一个候选都有run
+  的query数）、`divergence_queries`（有至少一个分歧单元的query数）、`divergence_cells`
+  （query×候选分歧单元总数）、`divergence_units`、`qualified_units`、`met_units`、
+  `selected_queries`、`budget`、`coverage_complete`。
+
+输入数组排列不影响输出：分组、系统、query、单元皆有全序；JSON 形状等价于
+`json.dump(..., indent=2, sort_keys=True)` 加尾随换行，同一 revision 与参数必须字节相同。
+
+## 设计与资源代价
+
+- 仓以 URI `mode=ro` 打开，绝不创建文件；单个延迟 `BEGIN` 固定快照，扫描、覆盖、选择与
+  样本载荷全部读同一快照；提交后写入的 revision 不会与旧 cells 混合。报告在事务提交后
+  才原子替换目标文件，因此失败不会留下半份报告，成功也不会发布跨 revision 的混合内容。
+- 事实按 query 流式处理：任意时刻 Python 只持有当前 query 的判断和其各系统 run（截取到
+  `min(k,top)` 位）；分歧 cell、覆盖单元与选择键都落在 `temp_store=FILE` 的 TEMP 表，
+  不把全仓判断/run 或全量 cell 载入 Python 内存。
+- 选择器只维护每个未选 query 的一行有序键；单元覆盖从 0→1 或 F-1→F 时才批量更新其余
+  query 的对应键，其余迁移不触发全量重排，因此总更新量随 cell 数线性，而不是每轮重算。
+- 容量验收（Linux，/proc VmHWM）：5万 query、32 系统、前100位、预算500、cell-floor 20，
+  实测峰值 RSS 约 28.9MiB，低于 192MiB 上限。报告包含全部样本、全部单元与完整差异位置。
+- 并发模型：单操作者批处理；读者经 WAL 快照读不被写者阻塞；不承诺断电恢复。

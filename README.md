@@ -41,6 +41,21 @@ src/retrieval_eval/model.py 为业务模型，相关算法模块独立组织；c
 warehouse.py 提供批次事实层、指标物化层与稀疏汇总报告，contract.py 提供契约升级审查，cli.py 衔接数据链路。
 fixtures 为明确自制样例，代码与样例采用MIT许可。
 
+## 人工仲裁样本包（review-pack）
+
+当锚点系统与候选系统对同一查询的前 k 位相关性判断不同，质量团队需要覆盖查询分组与系统的
+可复现复核清单。该命令只读打开现有评测仓，在同一快照内比较三态序列，按预算贪心选择查询，
+逐单元报告候选数/目标数/选中数与是否达标，并输出双方逐位文档与状态；缺 run、短 run、
+未判断与不同 k/top 都有确定语义。报告绑定仓 revision，同 revision 与参数字节相同。
+
+```sh
+.venv/bin/retrieval-eval review-pack --db run/eval.db --groups run/groups.json \
+  --anchor s1 --top 10 --budget 100 --cell-floor 3 --output run/review-pack.json
+```
+
+容量实测：5万 query、32 系统、前 100 位、预算 500、cell-floor 20 的峰值 RSS 约 28.9MiB，
+低于 192MiB 上限。口径、选择规则与报告字段见 [数据契约](docs/contract.md) 的 review pack 节。
+
 ## SQLite 会话与归因仓（session commands）
 
 新增三个独立入口，使用与评测仓分离的SQLite数据库，不改变检索评测、warehouse与contract-impact入口：

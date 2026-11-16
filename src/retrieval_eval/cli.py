@@ -5,6 +5,7 @@ from .common import read, save
 from .model import analyze
 from . import warehouse
 from . import contract
+from . import review
 from . import session as session_store
 
 FAILURES=(ValueError,TypeError,KeyError,OSError,OverflowError,RecursionError,sqlite3.Error)
@@ -102,9 +103,27 @@ def contract_impact(argv):
              'warning':report['summary']['warning'],'compatible':report['summary']['compatible']}
     print(json.dumps(summary,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
 
+def review_pack(argv):
+    parser=argparse.ArgumentParser(prog='retrieval-eval review-pack',description='Publish a budgeted human-arbitration sample pack for anchor-versus-candidate ranking divergences.')
+    parser.add_argument('--db',type=Path,required=True)
+    parser.add_argument('--groups',type=Path,required=True)
+    parser.add_argument('--anchor',type=str,required=True)
+    parser.add_argument('--top',type=int,required=True)
+    parser.add_argument('--budget',type=int,required=True)
+    parser.add_argument('--cell-floor',type=int,required=True)
+    parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        result=review.review(args.db,args.groups,args.anchor,args.top,args.budget,
+                             args.cell_floor,args.output)
+    except FAILURES as error:
+        print(str(error),file=sys.stderr);return 2
+    print(json.dumps({'db':str(args.db),'output':str(args.output),**result},
+                     sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
+
 COMMANDS={'warehouse-init':warehouse_init,'warehouse-apply':warehouse_apply,'warehouse-report':warehouse_report,
           'session-init':session_init,'session-apply':session_apply,'session-report':session_report,
-          'contract-impact':contract_impact}
+          'contract-impact':contract_impact,'review-pack':review_pack}
 
 def main():
     argv=sys.argv[1:]
