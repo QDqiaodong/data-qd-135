@@ -4,6 +4,7 @@ from pathlib import Path
 from .common import read, save
 from .model import analyze
 from . import warehouse
+from . import contract
 
 FAILURES=(ValueError,TypeError,KeyError,OSError,OverflowError,RecursionError,sqlite3.Error)
 
@@ -48,7 +49,28 @@ def warehouse_report(argv):
     summary={'db':str(args.db),'output':str(args.output),'revision':result['revision'],'systems':len(result['systems'])}
     print(json.dumps(summary,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
 
-COMMANDS={'warehouse-init':warehouse_init,'warehouse-apply':warehouse_apply,'warehouse-report':warehouse_report}
+def contract_impact(argv):
+    parser=argparse.ArgumentParser(prog='retrieval-eval contract-impact',description='Review an offline production contract upgrade: full field diff plus per-consumer read impact.')
+    parser.add_argument('--baseline',type=Path,required=True)
+    parser.add_argument('--candidate',type=Path,required=True)
+    parser.add_argument('--consumers',type=Path,required=True)
+    parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        output=args.output.resolve()
+        for source in (args.baseline,args.candidate,args.consumers):
+            if source.resolve()==output:raise ValueError('input and output must differ')
+        report=contract.impact(args.baseline,args.candidate,args.consumers,args.output)
+    except FAILURES as error:
+        print(str(error),file=sys.stderr);return 2
+    summary={'output':str(args.output),'dataset':report['dataset'],
+             'baseline_version':report['baseline_version'],'candidate_version':report['candidate_version'],
+             'field_diffs':len(report['field_diffs']),'blocked':report['summary']['blocked'],
+             'warning':report['summary']['warning'],'compatible':report['summary']['compatible']}
+    print(json.dumps(summary,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
+
+COMMANDS={'warehouse-init':warehouse_init,'warehouse-apply':warehouse_apply,'warehouse-report':warehouse_report,
+          'contract-impact':contract_impact}
 
 def main():
     argv=sys.argv[1:]

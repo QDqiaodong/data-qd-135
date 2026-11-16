@@ -1,0 +1,86 @@
+{
+  "baseline_version": "2026.10",
+  "candidate_version": "2026.11",
+  "consumers": [
+    {
+      "id": "archiver",
+      "issues": [
+        {
+          "path": "legacy.code",
+          "reason": "removed_required_read"
+        }
+      ],
+      "status": "blocked"
+    },
+    {
+      "id": "dashboard",
+      "issues": [
+        {
+          "path": "legacy.code",
+          "reason": "removed_optional_read"
+        }
+      ],
+      "status": "warning"
+    },
+    {
+      "id": "fraud-scorer",
+      "issues": [
+        {
+          "path": "user.age",
+          "reason": "null_not_accepted"
+        },
+        {
+          "candidate_type": "number",
+          "path": "user.age",
+          "reason": "type_not_accepted"
+        }
+      ],
+      "status": "blocked"
+    }
+  ],
+  "dataset": "orders.events",
+  "field_diffs": [
+    {
+      "baseline": {
+        "nullable": true,
+        "required": false,
+        "type": "string"
+      },
+      "kind": "removed",
+      "path": "legacy.code"
+    },
+    {
+      "changes": {
+        "nullable": {
+          "from": false,
+          "to": true
+        },
+        "type": {
+          "from": "integer",
+          "to": "number"
+        }
+      },
+      "kind": "changed",
+      "path": "user.age"
+    },
+    {
+      "candidate": {
+        "nullable": true,
+        "required": false,
+        "type": "string"
+      },
+      "kind": "added",
+      "path": "user.segment"
+    }
+  ],
+  "schema_version": 1,
+  "summary": {
+    "blocked": 2,
+    "compatible": 0,
+    "consumers_total": 3,
+    "fields_added": 1,
+    "fields_changed": 1,
+    "fields_removed": 1,
+    "warning": 1
+  }
+}

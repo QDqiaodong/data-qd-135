@@ -38,8 +38,22 @@ python3 -m venv .venv
 ```
 
 src/retrieval_eval/model.py 为业务模型，相关算法模块独立组织；common.py 提供受限JSON及报告发布，
-warehouse.py 提供批次事实层、指标物化层与稀疏汇总报告，cli.py 衔接数据链路。
+warehouse.py 提供批次事实层、指标物化层与稀疏汇总报告，contract.py 提供契约升级审查，cli.py 衔接数据链路。
 fixtures 为明确自制样例，代码与样例采用MIT许可。
+
+## 离线生产契约升级审查
+
+切换事件数据集版本前，逐消费者判定是否仍能安全读取：完整字段差异（新增/删除/类型/可空性）
+结合每个实际读取变更路径的消费者单独判定，输出 blocked/warning/compatible 状态与原因。
+判定口径与容量上限见 [数据契约](docs/contract.md) 的 contract impact 节。
+
+```sh
+.venv/bin/retrieval-eval contract-impact --baseline fixtures/contract/baseline.json --candidate fixtures/contract/candidate.json --consumers fixtures/contract/consumers.json --output run/contract-report.json
+```
+
+样例中 user.age 类型放宽且变为可空：只接受integer且拒绝null的fraud-scorer被阻断并同时保留两类原因，
+接受number与null的dashboard在该字段上无问题（因legacy.code可选删除得到warning）；
+legacy.code 的删除阻断必需读取它的archiver。
 
 ## 业务与样例结果
 

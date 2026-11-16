@@ -90,3 +90,68 @@ null资格，并改变所有系统的宏平均分母——没有该query显式ru
   单query替换的评分调用数恰等于该query最终显式run数（测试以计数器核对）。
 - 并发模型：单操作者批处理；写者BEGIN IMMEDIATE串行化（busy_timeout 5s），
   读者经WAL快照读不被写者阻塞；不承诺断电恢复。
+
+# Contract impact review v1（离线生产契约升级审查）
+
+面向数据平台团队：切换事件数据集版本前，需要知道每个下游消费者是否仍能安全读取。
+只用Python标准库；三份输入均为UTF-8 JSON，输出为确定性JSON报告；不访问任何服务。
+
+## 命令
+
+- `retrieval-eval contract-impact --baseline FILE --candidate FILE --consumers FILE --output REPORT`：
+  比较同一数据集的baseline与candidate两个版本契约，结合消费者读取声明给出逐消费者判定。
+  任一输入无效或输出失败退出2并保留旧报告；成功时原子替换并输出0。
+  沿用既有路径安全规则：任一输入与输出相同（按resolve比较）拒绝、输出为符号链接拒绝。
+  同输入重跑字节确定，与输入数组排列、对象键顺序及格式化无关。
+
+## 输入
+
+baseline/candidate：`{"dataset": ID, "version": ID, "fields": [...]}`，
+字段恰为 `{"path": P, "type": T, "required": B, "nullable": B}`。
+consumers：`{"dataset": ID, "consumers": [...]}`，消费者恰为 `{"id": ID, "reads": [...]}`，
+读取恰为 `{"path": P, "accepted_types": [T,...], "required": B, "accepts_null": B}`。
+
+- ID与path是非空标识符（去空白后非空、≤128字符、无控制字符）；type限
+  string/integer/number/boolean/object/array；required/nullable/accepts_null必须是JSON布尔。
+- 拒绝（均退出2）：重复字段路径（同一版本内）、重复消费者ID、同一消费者内重复读取路径、
+  未知键或缺键、空标识符、错型、空accepted_types、accepted_types内重复或未知类型、
+  三份输入dataset不一致；JSON层拒绝重复键与非有限数值。
+- 容量上限：每份输入≤64MB；每版本字段≤100000，消费者≤20000，每消费者读取≤1000。
+- 字段的required属性随added/removed快照保留，但不单独产生差异条目、不参与消费者判定。
+
+## 字段差异
+
+按路径比较两个版本，差异按路径排序，即使无消费者读取也完整保留：
+
+- `added`：候选新增，附candidate快照{type, required, nullable}。
+- `removed`：候选删除，附baseline快照。
+- `changed`：type或nullable变化，changes逐项记录{from, to}；
+  同一路径多个属性同时变化只列一次并保留全部变化。
+
+## 消费者判定
+
+每个候选差异 × 每个实际读取该路径的消费者单独判定，不构造消费者×全量字段的笛卡尔积，
+也不把字段级差异汇总成全体消费者通用的结论。问题reason：
+
+- `removed_required_read`：必需读取的字段被删除→阻断。
+- `removed_optional_read`：可选读取的字段被删除→警告。
+- `type_not_accepted`：候选类型不在该消费者accepted_types内→阻断（附candidate_type）。
+- `null_not_accepted`：字段从非空变为可空且该消费者accepts_null=false→阻断。
+  仅此情形accepts_null影响判定：新增字段、可空→非空、类型不变的可空字段均不产生该问题。
+
+其余为兼容；未读取变更路径的消费者不产生问题。同一消费者同一路径可同时保留多类原因。
+消费者状态：任一阻断问题→blocked，否则任一警告→warning，否则compatible。
+
+## 报告
+
+`{schema_version:1, dataset, baseline_version, candidate_version, field_diffs:[...],
+consumers:[{id, status, issues:[{path, reason, ...}]}], summary:{...}}`。
+consumers按ID排序，每消费者issues按(path, reason)排序；summary给出
+blocked/warning/compatible消费者数、消费者总数与三类字段差异数。
+
+## 规模与资源
+
+验收规模：20000字段、2000消费者、每消费者最多40读取。每份输入解析后立即折叠为紧凑元组
+并释放JSON树，峰值内存随逻辑模型而非JSON文本增长；影响判定经path→readers索引连接，
+工作量随变更路径数与命中读取数增长。Linux峰值RSS（/proc VmHWM）验收约82MiB，低于192MiB上限；
+报告仍包含全部字段差异与所有实际相关的消费者问题。

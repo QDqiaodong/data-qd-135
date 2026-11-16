@@ -1,0 +1,17 @@
+{
+  "dataset": "orders.events",
+  "consumers": [
+    {"id": "archiver", "reads": [
+      {"path": "legacy.code", "accepted_types": ["string"], "required": true, "accepts_null": false},
+      {"path": "session.duration", "accepted_types": ["number"], "required": true, "accepts_null": false}
+    ]},
+    {"id": "dashboard", "reads": [
+      {"path": "legacy.code", "accepted_types": ["string"], "required": false, "accepts_null": true},
+      {"path": "user.age", "accepted_types": ["integer", "number"], "required": false, "accepts_null": true}
+    ]},
+    {"id": "fraud-scorer", "reads": [
+      {"path": "event.id", "accepted_types": ["string"], "required": true, "accepts_null": false},
+      {"path": "user.age", "accepted_types": ["integer"], "required": true, "accepts_null": false}
+    ]}
+  ]
+}

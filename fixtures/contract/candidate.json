@@ -1,0 +1,12 @@
+{
+  "dataset": "orders.events",
+  "version": "2026.11",
+  "fields": [
+    {"path": "event.id", "type": "string", "required": true, "nullable": false},
+    {"path": "event.kind", "type": "string", "required": true, "nullable": false},
+    {"path": "session.duration", "type": "number", "required": false, "nullable": false},
+    {"path": "user.age", "type": "number", "required": false, "nullable": true},
+    {"path": "user.score", "type": "integer", "required": false, "nullable": true},
+    {"path": "user.segment", "type": "string", "required": false, "nullable": true}
+  ]
+}

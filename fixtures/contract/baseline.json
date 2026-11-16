@@ -1,0 +1,12 @@
+{
+  "dataset": "orders.events",
+  "version": "2026.10",
+  "fields": [
+    {"path": "event.id", "type": "string", "required": true, "nullable": false},
+    {"path": "event.kind", "type": "string", "required": true, "nullable": false},
+    {"path": "legacy.code", "type": "string", "required": false, "nullable": true},
+    {"path": "session.duration", "type": "number", "required": false, "nullable": false},
+    {"path": "user.age", "type": "integer", "required": false, "nullable": false},
+    {"path": "user.score", "type": "integer", "required": false, "nullable": true}
+  ]
+}
