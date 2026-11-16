@@ -91,6 +91,73 @@ null资格，并改变所有系统的宏平均分母——没有该query显式ru
 - 并发模型：单操作者批处理；写者BEGIN IMMEDIATE串行化（busy_timeout 5s），
   读者经WAL快照读不被写者阻塞；不承诺断电恢复。
 
+# Search operations session warehouse v1（会话、归因与日报）
+
+面向搜索运营团队，对迟到日志和源端更正构建可修订的离线会话与订单归因数据集。
+仓是独立的单个SQLite文件（WAL模式），只用Python标准库；`session-apply`/`session-report`
+可在不同进程间接续，无进程内缓存；报告只读取已持久化的派生表，不重新会话化或归因。
+
+## 命令
+
+- `retrieval-eval session-init --db DB`：建立新仓。DB已存在（含符号链接）则失败且不留残文件；
+  新仓revision为0，无任何事件、会话或订单。
+- `retrieval-eval session-apply --db DB --source FILE.jsonl`：原子应用一个事件批次。
+  每个成功的非空批次使revision恰增1；空批次（0条记录）成功但revision不变。
+  DB不存在时失败且不创建文件。DB与source按resolve比较不得为同一路径。
+- `retrieval-eval session-report --db DB --output REPORT`：发布确定性JSON报告。
+  输入/输出失败退出2并保留旧报告；输出路径不得是符号链接、不得与DB同路径，临时文件原子替换。
+  同仓同revision报告字节确定（键序、数组序、缩进、null位置均固定）。
+
+## 批次事实层与严格JSONL
+
+逐行严格UTF-8 JSON对象：拒绝空行（含纯空白行）、重复键、非有限数值（NaN/Infinity/溢出）、
+额外/缺失字段、非对象；末行可无换行；每行（不含换行）至多1MiB；文件不受旧8MB总量上限约束。
+两种操作，同批每个全局事件id至多一条操作，行排列不具有业务含义：
+
+- `{"op":"put","id":ID,"user":ID,"at":T,"kind":"view"}`
+- `{"op":"put",...,"kind":"search","channel":ID}`（search必须且只能带channel）
+- `{"op":"put",...,"kind":"purchase","amount_cents":A}`（purchase必须且只能带amount_cents）
+- `{"op":"delete","id":ID}`（删除不存在的事件为幂等no-op，仍计入批次revision）
+
+`at`为严格整数0..4102444800（布尔拒绝）；`amount_cents`为严格整数0..1000000000（布尔拒绝、
+允许0金额订单）。put是对同id事件的整体创建或更正，可改变user、时间、种类与载荷。
+任何错误（含末行错误）回滚整批：事实、成员关系、归因、日报、revision全部不变。
+
+## 会话组织
+
+每用户按`(at,id)`排序，相邻事件时间差`>1800`秒才断开；恰等1800仍相连。会话id为该会话
+最早事件（最小`(at,id)`）的全局事件id；持久化`start/end/event_count`及开始日`day=floor(start/86400)`。
+`members`显式物化每个事件到会话的成员关系，支撑边界定位、拆分与归因。迟到桥接事件可把多个
+旧会话合并为一个；删除/移走桥接点必须能把大会话拆回；事件改user时原用户与新用户的会话都重算。
+
+## 转化归因与日报
+
+每个现存purchase恰有一条orders行。在同一会话内选择严格位于订单之前（`(at,id)<(订单at,订单id)`，
+同秒不算）且时间差`<=3600`秒的最后一个search（按`at DESC,id DESC`）；没有则search_id与channel
+均为null，并保留所选search的channel。每笔金额只贡献一次，计入其所属会话开始日（不是订单发生日）。
+稀疏持久化`daily_sessions(day,session_count)`与`daily_orders(day,channel,order_count,amount_cents)`，
+计数降到0的分组立即删除；null channel在日报中排在同day字符串channel之前。
+
+会话边界变化会驱动受影响订单撤销旧贡献并按新会话语义重新判定，即使订单自身记录未变：
+桥接可使原先隔离的订单获得search归因，拆分可撤回归因。事件、成员、归因、日报与revision
+在同一`BEGIN IMMEDIATE`事务生效；报告在单读事务中只观察某个完整revision（WAL快照隔离），
+交错读者只能看到全旧或全新状态。
+
+## 增量局部性、显式物化与资源代价
+
+- 批次逐行（≤1MiB）流式进入TEMP stage，主键约束批内id唯一；整批或全仓事实从不读入Python。
+- 更正先捕获旧`(user,at)`锚点及其最终顺序上的直接前驱/后继，只定位与这些坐标相接的旧会话；
+  新事实的修复区间由窗口函数`LAG`/累计`SUM`在SQL内分段，独立用户与同用户独立会话不被扫描。
+  `events(user,at,id)`、`members(user,at,event_id)`等索引把边界查找限定为索引区间/点查。
+- `members`显式物化的代价是每事件一行及索引维护，换取O(log n)边界定位、可直接审计的成员关系，
+  以及删除/拆分时无需重扫全仓；会话/订单/日报均为稀疏表，报告按游标流式写出，不把全量行载入Python。
+- 冷仓首仓直接按`(user,at,id)`索引顺序对最终事实做窗口分段，避免长链上的区间自连接；
+  增量路径用一跳前驱/后继UNION而不是范围自连接，长会话桥接仍线性于受影响坐标。
+- Linux容量实测（/proc VmHWM）：100万事件（10万用户×10，100万会话）apply峰值约33.7MiB、
+  全量报告峰值约18.5MiB；10万事件单用户长会话apply峰值约31.7MiB，均远低于192MiB上限。
+- 并发模型：单操作者批处理；写者`BEGIN IMMEDIATE`串行化，读者经WAL快照读不被阻塞；
+  不承诺断电恢复。
+
 # Contract impact review v1（离线生产契约升级审查）
 
 面向数据平台团队：切换事件数据集版本前，需要知道每个下游消费者是否仍能安全读取。

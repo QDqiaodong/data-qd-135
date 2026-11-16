@@ -41,6 +41,21 @@ src/retrieval_eval/model.py 为业务模型，相关算法模块独立组织；c
 warehouse.py 提供批次事实层、指标物化层与稀疏汇总报告，contract.py 提供契约升级审查，cli.py 衔接数据链路。
 fixtures 为明确自制样例，代码与样例采用MIT许可。
 
+## SQLite 会话与归因仓（session commands）
+
+新增三个独立入口，使用与评测仓分离的SQLite数据库，不改变检索评测、warehouse与contract-impact入口：
+
+```sh
+.venv/bin/retrieval-eval session-init   --db run/session.db
+.venv/bin/retrieval-eval session-apply  --db run/session.db --source run/events.jsonl
+.venv/bin/retrieval-eval session-report --db run/session.db --output run/session-report.json
+```
+
+严格JSONL逐行（每行≤1MiB，无整文件8MB限制）支持`put`/`delete`事件更正；会话按用户`(at,id)`排序、
+相邻差`>1800`秒断开，显式物化成员关系；订单在同会话3600秒窗口内归因到严格在前的最后一个search，
+金额按会话开始日入日报。事实、会话、归因、日报与revision在同一事务原子生效，报告只读持久化结果。
+100万事件apply峰值约33.7MiB、报告峰值约18.5MiB，详见 `docs/contract.md` 的会话仓章节。
+
 ## 离线生产契约升级审查
 
 切换事件数据集版本前，逐消费者判定是否仍能安全读取：完整字段差异（新增/删除/类型/可空性）

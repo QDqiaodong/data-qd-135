@@ -5,6 +5,7 @@ from .common import read, save
 from .model import analyze
 from . import warehouse
 from . import contract
+from . import session as session_store
 
 FAILURES=(ValueError,TypeError,KeyError,OSError,OverflowError,RecursionError,sqlite3.Error)
 
@@ -49,6 +50,38 @@ def warehouse_report(argv):
     summary={'db':str(args.db),'output':str(args.output),'revision':result['revision'],'systems':len(result['systems'])}
     print(json.dumps(summary,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
 
+def session_init(argv):
+    parser=argparse.ArgumentParser(prog='retrieval-eval session-init',description='Create a new independent session warehouse at revision 0.')
+    parser.add_argument('--db',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        result=session_store.init(args.db)
+    except FAILURES as error:
+        print(str(error),file=sys.stderr);return 2
+    print(json.dumps({'db':str(args.db),**result},sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
+
+def session_apply(argv):
+    parser=argparse.ArgumentParser(prog='retrieval-eval session-apply',description='Atomically apply one strict session-event JSONL batch.')
+    parser.add_argument('--db',type=Path,required=True)
+    parser.add_argument('--source',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        result=session_store.apply(args.db,args.source)
+    except FAILURES as error:
+        print(str(error),file=sys.stderr);return 2
+    print(json.dumps(result,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
+
+def session_report(argv):
+    parser=argparse.ArgumentParser(prog='retrieval-eval session-report',description='Publish persisted session and attribution facts for one revision.')
+    parser.add_argument('--db',type=Path,required=True)
+    parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        result=session_store.report(args.db,args.output)
+    except FAILURES as error:
+        print(str(error),file=sys.stderr);return 2
+    print(json.dumps({'db':str(args.db),'output':str(args.output),**result},sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
+
 def contract_impact(argv):
     parser=argparse.ArgumentParser(prog='retrieval-eval contract-impact',description='Review an offline production contract upgrade: full field diff plus per-consumer read impact.')
     parser.add_argument('--baseline',type=Path,required=True)
@@ -70,6 +103,7 @@ def contract_impact(argv):
     print(json.dumps(summary,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0
 
 COMMANDS={'warehouse-init':warehouse_init,'warehouse-apply':warehouse_apply,'warehouse-report':warehouse_report,
+          'session-init':session_init,'session-apply':session_apply,'session-report':session_report,
           'contract-impact':contract_impact}
 
 def main():
